@@ -400,7 +400,7 @@ int at_command(int fd, char *cmd, int to)
 
 	wrote = write(fd, cmd, strlen(cmd));
 	if(_debug)
-		syslog(LOG_DEBUG, " wrote  %d \n", ecrivinhado);
+		syslog(LOG_DEBUG, " wrote  %d \n", wrote);
 
 	tcdrain(fd);
 	//PDEBUG( "(DEBUG) passou dessa droga de tcdrain\n");
@@ -817,13 +817,13 @@ void handle_command(GSM0710_Frame * frame)
 // shows how to use this program
 void usage(char *_name)
 {
-	PDEBUG("\nUsage: %s [options] <pty1> <pty2> ...\n",_name);
-	PDEBUG("  <ptyN>          : pty devices (e.g. /dev/ptya0)\n\n");
-	PDEBUG("options:\n");
-	PDEBUG("  -p <serport>    : Serial port device to connect to [/dev/modem]\n");
-	PDEBUG("  -f <framsize>   : Maximum frame size [32]\n");
-	PDEBUG("  -d              : Debug mode, don't fork\n");
-	PDEBUG("  -h              : Show this help message\n");
+	fprintf(stderr,"\nUsage: %s [options] <pty1> <pty2> ...\n",_name);
+	fprintf(stderr,"  <ptyN>          : pty devices (e.g. /dev/ptya0)\n\n");
+	fprintf(stderr,"options:\n");
+	fprintf(stderr,"  -p <serport>    : Serial port device to connect to [/dev/modem]\n");
+	fprintf(stderr,"  -f <framsize>   : Maximum frame size [32]\n");
+	fprintf(stderr,"  -d              : Debug mode, don't fork\n");
+	fprintf(stderr,"  -h              : Show this help message\n");
 }
 
 /* Extracts and handles frames from the receiver buffer.
@@ -1172,7 +1172,7 @@ int main(int argc, char *argv[], char *env[])
 
 	serportdev="/dev/modem";
 
-	while((opt=getopt(argc,argv,"p:f:h:d"))>0)
+	while((opt=getopt(argc,argv,"p:f:hd"))>0)
 	{
 		switch(opt)
 		{
