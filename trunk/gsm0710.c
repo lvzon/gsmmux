@@ -1281,7 +1281,7 @@ int main(int argc, char *argv[], char *env[])
 	 * in a final solution
 	 */
 
-	#ifdedf MC35i
+	#ifdef MC35i
 		//Modem Init for Siemens MC35i
 		if (!at_command(serial_fd,"AT\r\n", 10000))
 		{
