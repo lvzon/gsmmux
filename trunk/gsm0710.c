@@ -51,7 +51,6 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
-#include <malloc.h>
 #include <termios.h>
 #include <sys/time.h>
 #include <sys/ioctl.h>
@@ -73,6 +72,11 @@
 #define TRUE	1
 #define FALSE	0
 
+#define UNKNOW_MODEM	0
+#define MC35			1
+#define GENERIC			2
+
+
 static volatile int terminate = 0;
 static int terminateCount = 0;
 
@@ -86,6 +90,8 @@ static GSM0710_Buffer *in_buf;  // input buffer
 static int _debug = 0;
 static pid_t the_pid;
 int _priority;
+int _modem_type;
+
 
 
 #if 0
@@ -110,8 +116,9 @@ int ussp_open(int port)
 }
 #endif
 
-/* Returns success, when an ussp is opened.
-*/
+/**
+ * Returns success, when an ussp is opened.
+ */
 int ussp_connected(int port)
 {
 #if 0
@@ -137,6 +144,7 @@ int ussp_connected(int port)
 *
 * PARAMS:
 * channel - channel number (0 = control)
+
 * input   - the data to be written
 * count   - the length of the data
 * type    - the type of the frame (with possible P/F-bit)
@@ -393,21 +401,18 @@ int at_command(int fd, char *cmd, int to)
 	int returnCode = 0;
 	int wrote = 0;
 
-	#ifdef DEBUG
 	if(_debug)
 		syslog(LOG_DEBUG, "is in %s\n", __FUNCTION__);
-	#endif
 
 	wrote = write(fd, cmd, strlen(cmd));
+
 	if(_debug)
 		syslog(LOG_DEBUG, " wrote  %d \n", wrote);
 
 	tcdrain(fd);
-	//PDEBUG( "(DEBUG) passou dessa droga de tcdrain\n");
 	sleep(1);
 	//memset(buf, 0, sizeof(buf));
 	//len = read(fd, buf, sizeof(buf));
-	//PDEBUG( "(DEBUG) leu %d bytes == %s\n", len, buf);
 
 	for (i = 0; i < 100; i++)
 	{
@@ -508,7 +513,8 @@ void print_frame(GSM0710_Frame * frame)
 	}
 
 	/**
-	 * tooooooo looonnngggg to execute on an embedded system with limited resources
+	 * tooooooo looonnngggg to execute on
+	 * embedded systems with limited resources
 	 * and rigid time constraints
 	 *
 	if (FRAME_IS(SABM, frame))
@@ -823,6 +829,7 @@ void usage(char *_name)
 	fprintf(stderr,"  -p <serport>    : Serial port device to connect to [/dev/modem]\n");
 	fprintf(stderr,"  -f <framsize>   : Maximum frame size [32]\n");
 	fprintf(stderr,"  -d              : Debug mode, don't fork\n");
+	fprintf(stderr,"  -m <modem>      : Modem (mc35, generic, ...)\n");
 	fprintf(stderr,"  -h              : Show this help message\n");
 }
 
@@ -1075,9 +1082,11 @@ void extract_frames(GSM0710_Buffer * buf)
 }
 
 
+
 /**
  * Daemonize process, this process  create teh daemon
  */
+
 int daemonize(int _debug)
 {
 	int maxi;
@@ -1141,7 +1150,68 @@ void signal_treatment(int param)
 
 }
 
-// the main program
+void initSiemensMC35()
+{
+	char mux_command[] = "AT+CMUX=0\r\n";
+	//Modem Init for Siemens MC35i
+	if (!at_command(serial_fd,"AT\r\n", 10000))
+	{
+		if(_debug)
+			syslog(LOG_DEBUG, "ERROR AT %d\r\n", __LINE__);
+	}
+
+	if (!at_command(serial_fd,"AT+IPR=57600\r\n", 10000))
+	{
+		if(_debug)
+			syslog(LOG_DEBUG, "ERROR AT+IPR=57600 %d \r\n", __LINE__);
+	}
+	if (!at_command(serial_fd,"AT\r\n", 10000))
+	{
+		if(_debug)
+			syslog(LOG_DEBUG, "ERROR AT %d \r\n", __LINE__);
+	}
+
+	if (!at_command(serial_fd,"AT&S0\r\n", 10000))
+	{
+		if(_debug)
+			syslog(LOG_DEBUG, "ERRO AT&S0 %d\r\n", __LINE__);
+	}
+	if (!at_command(serial_fd,"AT\\Q3\r\n", 10000))
+	{
+		if(_debug)
+			syslog(LOG_DEBUG, "ERRO AT\\Q3 %d\r\n", __LINE__);
+	}
+	if (!at_command(serial_fd, mux_command, 10000))
+	{
+		syslog(LOG_ERR, "MUX mode doesn't function.\n");
+		exit(-1);
+	}
+}
+void initGeneric()
+{
+	char mux_command[] = "AT+CMUX=0\r\n";
+	/**
+	 * Modem Init for Siemens Generic like Sony
+	 * that don't need initialization sequence like Siemens MC35
+	 */
+	if (!at_command(serial_fd,"AT\r\n", 10000))
+	{
+		if(_debug)
+			syslog(LOG_DEBUG, "ERROR AT %d\r\n", __LINE__);
+	}
+
+	if (!at_command(serial_fd, mux_command, 10000))
+	{
+		syslog(LOG_ERR, "MUX mode doesn't function.\n");
+		exit(-1);
+	}
+}
+
+
+
+/**
+ * The main program
+ */
 int main(int argc, char *argv[], char *env[])
 {
 	//struct sigaction sa;
@@ -1154,7 +1224,7 @@ int main(int argc, char *argv[], char *env[])
 	char *programName;
 	int i, size,t;
 	int numOfPorts;
-	char mux_command[] = "AT+CMUX=0\r\n";
+
 	unsigned char close_mux[2] = { C_CLD | CR, 1 };
 	int opt;
 	char *serportdev;
@@ -1168,11 +1238,11 @@ int main(int argc, char *argv[], char *env[])
 		usage(programName);
 		exit(-1);
 	}
-
+	_modem_type = GENERIC;
 
 	serportdev="/dev/modem";
 
-	while((opt=getopt(argc,argv,"p:f:hd"))>0)
+	while((opt=getopt(argc,argv,"p:f:h:d:m"))>0)
 	{
 		switch(opt)
 		{
@@ -1185,6 +1255,13 @@ int main(int argc, char *argv[], char *env[])
 			//Vitorio
 			case 'd' :
 				_debug = 1;
+				break;
+			case 'm':
+				if(!strcmp(optarg,"mc35"))
+					_modem_type = MC35;
+				else if(!strcmp(optarg,"generic"))
+						_modem_type = GENERIC;
+					else _modem_type = UNKNOW_MODEM;
 				break;
 			case '?' :
 			case 'h' :
@@ -1281,54 +1358,19 @@ int main(int argc, char *argv[], char *env[])
 	 * in a final solution
 	 */
 
-	#ifdef MC35i
-		//Modem Init for Siemens MC35i
-		if (!at_command(serial_fd,"AT\r\n", 10000))
-		{
-			if(_debug)
-				syslog(LOG_DEBUG, "ERROR AT %d\r\n", __LINE__);
-		}
+	switch(_modem_type)
+	{
+		case MC35:
+			initSiemensMC35(); //we coould have other models like XP48 TC45/35
+			break;
+		case GENERIC:
+			initGeneric();
+			break;
+		//case default:
+		//	syslog(LOG_ERR, "OOPS Strange modem\n");
+		//	break;
+	}
 
-		if (!at_command(serial_fd,"AT+IPR=57600\r\n", 10000))
-		{
-			if(_debug)
-				syslog(LOG_DEBUG, "ERROR AT+IPR=57600 %d \r\n", __LINE__);
-		}
-		if (!at_command(serial_fd,"AT\r\n", 10000))
-		{
-			if(_debug)
-				syslog(LOG_DEBUG, "ERROR AT %d \r\n", __LINE__);
-		}
-
-		if (!at_command(serial_fd,"AT&S0\r\n", 10000))
-		{
-			if(_debug)
-				syslog(LOG_DEBUG, "ERRO AT&S0 %d\r\n", __LINE__);
-		}
-		if (!at_command(serial_fd,"AT\\Q3\r\n", 10000))
-		{
-			if(_debug)
-				syslog(LOG_DEBUG, "ERRO AT\\Q3 %d\r\n", __LINE__);
-		}
-		if (!at_command(serial_fd, mux_command, 10000))
-		{
-			syslog(LOG_ERR, "MUX mode doesn't function.\n");
-			return -1;
-		}
-	#else
-			//Modem Init for Siemens MC35i
-		if (!at_command(serial_fd,"AT\r\n", 10000))
-		{
-			if(_debug)
-				syslog(LOG_DEBUG, "ERROR AT %d\r\n", __LINE__);
-		}
-
-		if (!at_command(serial_fd, mux_command, 10000))
-		{
-			syslog(LOG_ERR, "MUX mode doesn't function.\n");
-			return -1;
-		}
-	#endif
 	//End Modem Init
 
 	syslog(LOG_INFO, "Waiting for mux-mode.\n");
@@ -1457,4 +1499,3 @@ int main(int argc, char *argv[], char *env[])
 	return 0;
 
 }
-

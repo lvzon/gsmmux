@@ -1,29 +1,29 @@
 # Comment/uncomment the following line to disable/enable debugging
-# DEBUG = y
+DEBUG = y
 
-TARGET = gsm0710
+TARGET = gsmMuxd
 SRC = gsm0710.c buffer.c
 OBJS = gsm0710.o buffer.o
 
 CC = gcc
 LD = gcc
-CFLAGS = -Wall 
+CFLAGS = -Wall
 LDLIBS = -lm
 
 ifeq ($(DEBUG),y)
-  CFLAGS += -DDEBUG 
+  CFLAGS += -DDEBUG
 endif
 
 
 all: $(TARGET)
 
-clean: 
+clean:
 	rm -f $(OBJS) $(TARGET)
 
 %.o: %.c
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-$(TARGET): $(OBJS) 
+$(TARGET): $(OBJS)
 	$(LD) $(LDLIBS) -o $@ $(OBJS)
 
 .PHONY: all clean
