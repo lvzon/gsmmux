@@ -73,8 +73,8 @@
 #define FALSE	0
 
 #define UNKNOW_MODEM	0
-#define MC35			1
-#define GENERIC			2
+#define MC35		1
+#define GENERIC		2
 
 
 static volatile int terminate = 0;
@@ -187,8 +187,7 @@ int write_frame(int channel, const char *input, int count, unsigned char type)
 	if (c != prefix_length)
 	{
 		if(_debug)
-			syslog(LOG_DEBUG,"Couldn't write the whole prefix to the serial port for the virtual port %d. Wrote only %d  bytes.",
-			channel, c);
+			syslog(LOG_DEBUG,"Couldn't write the whole prefix to the serial port for the virtual port %d. Wrote only %d  bytes.", channel, c);
 		return 0;
 	}
 	if (count > 0)
@@ -197,8 +196,7 @@ int write_frame(int channel, const char *input, int count, unsigned char type)
 		if (count != c)
 		{
 			if(_debug)
-				syslog(LOG_DEBUG,"Couldn't write all data to the serial port from the virtual port %d. Wrote only %d bytes.\n",
-				channel, c);
+				syslog(LOG_DEBUG,"Couldn't write all data to the serial port from the virtual port %d. Wrote only %d bytes.\n", channel, c);
 			return 0;
 		}
 	}
@@ -206,8 +204,7 @@ int write_frame(int channel, const char *input, int count, unsigned char type)
 	if (c != 2)
 	{
 		if(_debug)
-			syslog(LOG_DEBUG,"Couldn't write the whole postfix to the serial port for the virtual port %d. Wrote only %d bytes.",
-			channel, c);
+			syslog(LOG_DEBUG,"Couldn't write the whole postfix to the serial port for the virtual port %d. Wrote only %d bytes.", channel, c);
 		return 0;
 	}
 
@@ -1086,7 +1083,6 @@ void extract_frames(GSM0710_Buffer * buf)
 /**
  * Daemonize process, this process  create teh daemon
  */
-
 int daemonize(int _debug)
 {
 	int maxi;
@@ -1117,6 +1113,10 @@ int daemonize(int _debug)
 	return 0;
 }
 
+/**
+ * Function responsible by all signal handlers treatment
+ * any new signal must be added here
+ */
 void signal_treatment(int param)
 {
 	switch(param)
@@ -1150,6 +1150,10 @@ void signal_treatment(int param)
 
 }
 
+/**
+ * Fuunction to init Modemd Siemes MC35 families
+ * Siemens need and special step-by for after get-in MUX state
+ */
 void initSiemensMC35()
 {
 	char mux_command[] = "AT+CMUX=0\r\n";
@@ -1187,6 +1191,10 @@ void initSiemensMC35()
 		exit(-1);
 	}
 }
+
+/**
+ * Function to start modems that only needs at+cmux=X to get-in mux state
+ */
 void initGeneric()
 {
 	char mux_command[] = "AT+CMUX=0\r\n";
@@ -1231,7 +1239,7 @@ int main(int argc, char *argv[], char *env[])
 	char *ptydev[MAX_CHANNELS];
 
 
-    programName = argv[0];
+	programName = argv[0];
 	/*************************************/
 	if(argc<2)
 	{
