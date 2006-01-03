@@ -29,6 +29,10 @@
 *  - Seriously broke hardware handshaking.
 *  - Changed commandline interface to use getopts:
 *
+* Modified January 2006 by Tuukka Karvonen <tkarvone@iki.fi>
+*  - Applied patches received from Ivan S. Dubrov
+*  - More updates comming up soon
+*
 * New Usage:
 * gsm0710 [options] <pty1> <pty2> ...
 *
@@ -92,7 +96,8 @@ static pid_t the_pid;
 int _priority;
 int _modem_type;
 
-
+static int baudrates[] = { 
+    0, 9600, 19200, 38400, 57600, 115200, 230400, 460800 };
 
 #if 0
 /* Opens USSP port for use.
@@ -339,11 +344,16 @@ int ussp_recv_data(unsigned char *buf, int len, int port)
 #else
 	int written = 0;
 	int i = 0;
+    int last  = 0;
 	// try to write 5 times
-	while ((written += write_frame(port + 1, buf + written,
-								len - written, UIH)) != len && i < WRITE_RETRIES)
+	while (written  != len && i < WRITE_RETRIES)
 	{
-		i++;
+        last = write_frame(port + 1, buf + written,
+								len - written, UIH);
+        written += last;
+        if (last == 0) {
+		    i++;
+        }
 	}
 	if (i == WRITE_RETRIES)
 	{
@@ -827,6 +837,7 @@ void usage(char *_name)
 	fprintf(stderr,"  -f <framsize>   : Maximum frame size [32]\n");
 	fprintf(stderr,"  -d              : Debug mode, don't fork\n");
 	fprintf(stderr,"  -m <modem>      : Modem (mc35, generic, ...)\n");
+    fprintf(stderr,"  -b <baudrate>   : MUX mode baudrate (0,9600,14400, ...)\n");
 	fprintf(stderr,"  -h              : Show this help message\n");
 }
 
@@ -1100,16 +1111,13 @@ int daemonize(int _debug)
 			exit(0);
 		chdir("/"); //change working directory
 		umask(0);// clear our file mode creation mask
+
+        // Close out the standard file descriptors
+        close(STDIN_FILENO);
+        close(STDOUT_FILENO);
+        close(STDERR_FILENO);
 	}
 	//daemonize process stop here
-	/*close all the file descriptors in the system
-	daemonize yet
-	*/
-	fprintf(stdout, "Daemon starting, look syslog messages....\n");
-
-	//close all file descriptors
-	for(maxi = 0; maxi < 64; maxi++) close(maxi);
-
 	return 0;
 }
 
@@ -1151,20 +1159,45 @@ void signal_treatment(int param)
 }
 
 /**
+ * Determine baud rate index for CMUX command
+ */
+int indexOfBaud(int baudrate) {
+    int i;
+
+    for (i = 0; i < sizeof(baudrates) / sizeof(baudrates[0]); ++i) {
+        if (baudrates[i] == baudrate)
+            return i;
+    }
+    return 0;
+}
+
+/**
  * Fuunction to init Modemd Siemes MC35 families
  * Siemens need and special step-by for after get-in MUX state
  */
-void initSiemensMC35()
+void initSiemensMC35(int baudrate)
 {
 	char mux_command[] = "AT+CMUX=0\r\n";
+    char speed_command[20] = "AT+IPR=57600\r\n";
+	unsigned char close_mux[2] = { C_CLD | CR, 1 };
+
+
+    int baud = indexOfBaud(baudrate);
 	//Modem Init for Siemens MC35i
 	if (!at_command(serial_fd,"AT\r\n", 10000))
 	{
 		if(_debug)
 			syslog(LOG_DEBUG, "ERROR AT %d\r\n", __LINE__);
+
+        syslog(LOG_INFO, "Modem does not respond to AT commands, trying close MUX mode");
+		write_frame(0, close_mux, 2, UIH);
+        at_command(serial_fd,"AT\r\n", 10000);
 	}
 
-	if (!at_command(serial_fd,"AT+IPR=57600\r\n", 10000))
+    if (baud != 0) {
+        sprintf(speed_command, "AT+IPR=%d\r\n", baudrate);
+    }
+	if (!at_command(serial_fd, speed_command, 10000))
 	{
 		if(_debug)
 			syslog(LOG_DEBUG, "ERROR AT+IPR=57600 %d \r\n", __LINE__);
@@ -1195,9 +1228,17 @@ void initSiemensMC35()
 /**
  * Function to start modems that only needs at+cmux=X to get-in mux state
  */
-void initGeneric()
+void initGeneric(int baudrate)
 {
-	char mux_command[] = "AT+CMUX=0\r\n";
+	char mux_command[20] = "AT+CMUX=0\r\n";
+    unsigned char close_mux[2] = { C_CLD | CR, 1 };
+
+    int baud = indexOfBaud(baudrate);
+    if (baud != 0) {
+        // Setup the speed explicitly, if given
+        sprintf(mux_command, "AT+CMUX=0,0,%d\r\n", baud);
+    }
+	
 	/**
 	 * Modem Init for Siemens Generic like Sony
 	 * that don't need initialization sequence like Siemens MC35
@@ -1206,6 +1247,10 @@ void initGeneric()
 	{
 		if(_debug)
 			syslog(LOG_DEBUG, "ERROR AT %d\r\n", __LINE__);
+
+        syslog(LOG_INFO, "Modem does not respond to AT commands, trying close MUX mode");
+		write_frame(0, close_mux, 2, UIH);
+        at_command(serial_fd,"AT\r\n", 10000);
 	}
 
 	if (!at_command(serial_fd, mux_command, 10000))
@@ -1232,6 +1277,7 @@ int main(int argc, char *argv[], char *env[])
 	char *programName;
 	int i, size,t;
 	int numOfPorts;
+    int baudrate = 0;
 
 	unsigned char close_mux[2] = { C_CLD | CR, 1 };
 	int opt;
@@ -1250,7 +1296,7 @@ int main(int argc, char *argv[], char *env[])
 
 	serportdev="/dev/modem";
 
-	while((opt=getopt(argc,argv,"p:f:h:d:m"))>0)
+	while((opt=getopt(argc,argv,"p:f:hdm:b:"))>0)
 	{
 		switch(opt)
 		{
@@ -1271,6 +1317,9 @@ int main(int argc, char *argv[], char *env[])
 						_modem_type = GENERIC;
 					else _modem_type = UNKNOW_MODEM;
 				break;
+            case 'b':
+                baudrate = atoi(optarg);
+                break;
 			case '?' :
 			case 'h' :
 				usage(programName);
@@ -1369,10 +1418,10 @@ int main(int argc, char *argv[], char *env[])
 	switch(_modem_type)
 	{
 		case MC35:
-			initSiemensMC35(); //we coould have other models like XP48 TC45/35
+			initSiemensMC35(baudrate); //we coould have other models like XP48 TC45/35
 			break;
 		case GENERIC:
-			initGeneric();
+			initGeneric(baudrate);
 			break;
 		//case default:
 		//	syslog(LOG_ERR, "OOPS Strange modem\n");
