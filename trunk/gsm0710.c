@@ -42,6 +42,8 @@
 *  -h  		   : Show this help message
 *  <included by Cargnini>
 *  -d              : debug mode (don't fork)
+*  -m <modem>      : Modem (mc35, generic, ...)\n");
+*  -b <baudrate>   : MUX mode baudrate (0,9600,19200, ...)
 */
 
 #ifdef HAVE_CONFIG_H
@@ -837,7 +839,7 @@ void usage(char *_name)
 	fprintf(stderr,"  -f <framsize>   : Maximum frame size [32]\n");
 	fprintf(stderr,"  -d              : Debug mode, don't fork\n");
 	fprintf(stderr,"  -m <modem>      : Modem (mc35, generic, ...)\n");
-    fprintf(stderr,"  -b <baudrate>   : MUX mode baudrate (0,9600,14400, ...)\n");
+    fprintf(stderr,"  -b <baudrate>   : MUX mode baudrate (0,9600,19200, ...)\n");
 	fprintf(stderr,"  -h              : Show this help message\n");
 }
 
