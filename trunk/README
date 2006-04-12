@@ -15,6 +15,7 @@ Introduction
   - Sony-Ericsson GM29 
   - Siemens MC35
   - Siemens MC35i
+  - Siemens MC75
   - Sony-Ericsson GM47/GM48 (not tested with the most recent version of 
                              the driver)
 
@@ -27,7 +28,7 @@ Instructions for Use
     -p <serport>        : Serial port device to connect to [/dev/modem]
     -f <framsize>       : Maximum frame size [32]
     -d                  : Debug mode, don't fork
-    -m <modem>          : Modem (mc35, generic, ...)
+    -m <modem>          : Modem (mc35, mc75, generic, ...)
     -b <baudrate>       : MUX mode baudrate (0,9600,14400, ...)
     -P <PIN-code>       : PIN code to fed to the modem
     -s <symlink-prefix> : Prefix for the symlinks of slave devices 

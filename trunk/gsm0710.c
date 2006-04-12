@@ -42,6 +42,15 @@
 *  - at_command looks for AT/ERROR responses with findInBuf function instead
 *    of strstr function so that incoming carbage won't confuse it
 *
+* Modified March 2006 by Tuukka Karvonen <tkarvone@iki.fi>
+*  - Added -r option which makes the mux driver to restart itself in case
+*    the modem stops responding. This should make the driver more fault
+*    tolerant. 
+*  - Some code restructuring that was required by the automatic restarting
+*  - buffer.c to use syslog instead of PDEBUG
+*  - fixed open_pty function to grant right for Unix98 scheme pseudo
+*    terminals even though symlinks are not in use
+*
 * New Usage:
 * gsmMuxd [options] <pty1> <pty2> ...
 *
@@ -62,6 +71,7 @@
 #include <unistd.h>
 #include <string.h>
 #include <stdio.h>
+#include <time.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
@@ -90,7 +100,10 @@
 #define UNKNOW_MODEM	0
 #define MC35		1
 #define GENERIC		2
-
+// Defines how often the modem is polled when automatic restarting is enabled
+// The value is in seconds
+#define POLLING_INTERVAL 5
+#define MAX_PINGS 4
 
 static volatile int terminate = 0;
 static int terminateCount = 0;
@@ -107,6 +120,15 @@ static int _debug = 0;
 static pid_t the_pid;
 int _priority;
 int _modem_type;
+static char *serportdev;
+static int pin_code = 0;
+static char *ptydev[MAX_CHANNELS];
+static int numOfPorts;
+static int maxfd;
+static int baudrate = 0;
+static int *remaining;
+static int faultTolerant = 0;
+static int restart = 0;
 
 /* The following arrays must have equal length and the values must 
  * correspond.
@@ -510,25 +532,41 @@ char *createSymlinkName(int idx) {
 }
 
 int open_pty(char* devname, int idx) {
-  int fd = open(devname, O_RDWR | O_NONBLOCK);
-  char *symLinkName = createSymlinkName(idx);
-  if (fd != -1 && symLinkName) {
-    char* ptsSlaveName = ptsname(fd);	  
+	struct termios options;
+	int fd = open(devname, O_RDWR | O_NONBLOCK);
+	char *symLinkName = createSymlinkName(idx);
+	if (fd != -1) {
+		if (symLinkName) {
+			char* ptsSlaveName = ptsname(fd);	  
 
-    // Create symbolic device name, e.g. /dev/mux0
-    unlink(symLinkName);
-    if (symlink(ptsSlaveName, symLinkName) != 0) {
-      syslog(LOG_ERR,"Can't create symbolic link %s -> %s. %s (%d).\n", symLinkName, ptsSlaveName, strerror(errno), errno);
-    }
-
-    if (strcmp(devname, "/dev/ptmx") == 0) {
-      // Otherwise programs cannot access the pseudo terminals
-      grantpt(fd);
-      unlockpt(fd);
-    }
-  }
-  free(symLinkName);
-  return fd;
+			// Create symbolic device name, e.g. /dev/mux0
+			unlink(symLinkName);
+			if (symlink(ptsSlaveName, symLinkName) != 0) {
+				syslog(LOG_ERR,"Can't create symbolic link %s -> %s. %s (%d).\n", symLinkName, ptsSlaveName, strerror(errno), errno);
+			}
+		}
+		// get the parameters
+		tcgetattr(fd, &options);
+		// set raw input
+		options.c_lflag &= ~(ICANON | ECHO | ECHOE | ISIG);
+		options.c_iflag &= ~(INLCR | ICRNL | IGNCR);
+			
+		// set raw output
+		options.c_oflag &= ~OPOST;
+		options.c_oflag &= ~OLCUC;
+		options.c_oflag &= ~ONLRET;
+		options.c_oflag &= ~ONOCR;
+		options.c_oflag &= ~OCRNL;
+		tcsetattr(fd, TCSANOW, &options);
+ 
+		if (strcmp(devname, "/dev/ptmx") == 0) {
+			// Otherwise programs cannot access the pseudo terminals
+			grantpt(fd);
+			unlockpt(fd);
+		}
+	}
+	free(symLinkName);
+	return fd;
 }
 
 
@@ -613,7 +651,7 @@ void setAdvancedOptions(int fd, speed_t baud) {
 * RETURNS :
 * file descriptor or -1 on error
 */
-int open_serialport(char *dev, int baudrate)
+int open_serialport(char *dev)
 {
 	int fd;
 
@@ -622,51 +660,51 @@ int open_serialport(char *dev, int baudrate)
 	fd = open(dev, O_RDWR | O_NOCTTY | O_NDELAY);
 	if (fd != -1)
 	{
-            int index = indexOfBaud(baudrate);
-            if(_debug)
-                syslog(LOG_DEBUG, "serial opened\n" );
-            if (index > 0) {
-                // Switch the baud rate to zero and back up to wake up 
-                // the modem
-                setAdvancedOptions(fd, baud_bits[index]);
-            } else {
-                struct termios options;
-                // The old way. Let's not change baud settings
-		fcntl(fd, F_SETFL, 0);
-
-		// get the parameters
-		tcgetattr(fd, &options);
-
-		// Set the baud rates to 57600...
-		// cfsetispeed(&options, B57600);
-		// cfsetospeed(&options, B57600);
-
-		// Enable the receiver and set local mode...
-		options.c_cflag |= (CLOCAL | CREAD);
-
-		// No parity (8N1):
-		options.c_cflag &= ~PARENB;
-		options.c_cflag &= ~CSTOPB;
-		options.c_cflag &= ~CSIZE;
-		options.c_cflag |= CS8;
-
-		// enable hardware flow control (CNEW_RTCCTS)
-		// options.c_cflag |= CRTSCTS;
-
-		// set raw input
-		options.c_lflag &= ~(ICANON | ECHO | ECHOE | ISIG);
-                options.c_iflag &= ~(INLCR | ICRNL | IGNCR);
-
-		// set raw output
-		options.c_oflag &= ~OPOST;
-                options.c_oflag &= ~OLCUC;
-                options.c_oflag &= ~ONLRET;
-                options.c_oflag &= ~ONOCR;
-                options.c_oflag &= ~OCRNL;
-
-		// Set the new options for the port...
-		tcsetattr(fd, TCSANOW, &options);
-            }
+		int index = indexOfBaud(baudrate);
+		if(_debug)
+			syslog(LOG_DEBUG, "serial opened\n" );
+		if (index > 0) {
+			// Switch the baud rate to zero and back up to wake up 
+			// the modem
+			setAdvancedOptions(fd, baud_bits[index]);
+		} else {
+			struct termios options;
+			// The old way. Let's not change baud settings
+			fcntl(fd, F_SETFL, 0);
+			
+			// get the parameters
+			tcgetattr(fd, &options);
+			
+			// Set the baud rates to 57600...
+			// cfsetispeed(&options, B57600);
+			// cfsetospeed(&options, B57600);
+			
+			// Enable the receiver and set local mode...
+			options.c_cflag |= (CLOCAL | CREAD);
+			
+			// No parity (8N1):
+			options.c_cflag &= ~PARENB;
+			options.c_cflag &= ~CSTOPB;
+			options.c_cflag &= ~CSIZE;
+			options.c_cflag |= CS8;
+			
+			// enable hardware flow control (CNEW_RTCCTS)
+			// options.c_cflag |= CRTSCTS;
+			
+			// set raw input
+			options.c_lflag &= ~(ICANON | ECHO | ECHOE | ISIG);
+			options.c_iflag &= ~(INLCR | ICRNL | IGNCR);
+			
+			// set raw output
+			options.c_oflag &= ~OPOST;
+			options.c_oflag &= ~OLCUC;
+			options.c_oflag &= ~ONLRET;
+			options.c_oflag &= ~ONOCR;
+			options.c_oflag &= ~OCRNL;
+			
+			// Set the new options for the port...
+			tcsetattr(fd, TCSANOW, &options);
+		}
 	}
 	return fd;
 }
@@ -680,31 +718,6 @@ void print_frame(GSM0710_Frame * frame)
 		syslog(LOG_DEBUG,"Received ");
 	}
 
-	/**
-	 * tooooooo looonnngggg to execute on
-	 * embedded systems with limited resources
-	 * and rigid time constraints
-	 *
-	if (FRAME_IS(SABM, frame))
-	if(_debug)
-			PDEBUG("SABM ");
-	else if (FRAME_IS(UIH, frame))
-     if(_debug)
-			PDEBUG("UIH ");
-	else if (FRAME_IS(UA, frame))
-		PDEBUG("UA ");
-	else if (FRAME_IS(DM, frame))
-		PDEBUG("DM ");
-	else if (FRAME_IS(DISC, frame))
-		PDEBUG("DISC ");
-	else if (FRAME_IS(UI, frame))
-		PDEBUG("UI ");
-	else
-	{
-		PDEBUG("unkown (control=%d) ", frame->control);
-	}
-	PDEBUG("frame for channel %d.\n", frame->channel);
-	*/
     switch((frame->control & ~PF))
 	{
 		case SABM:
@@ -788,10 +801,14 @@ void handle_command(GSM0710_Frame * frame)
 			switch((type & ~CR))
 			{
 				case C_CLD:
-					if(_debug)
-						syslog(LOG_DEBUG,"The mobile station requested mux-mode termination.\n");
-					terminate = 1;
-					terminateCount = -1;    // don't need to close down channels
+					syslog(LOG_INFO,"The mobile station requested mux-mode termination.\n");
+					if (faultTolerant) {
+						// Signal restart
+						restart = 1;
+					} else {
+						terminate = 1;
+						terminateCount = -1;    // don't need to close down channels
+					}
 					break;
 				case C_TEST:
 	#ifdef DEBUG
@@ -903,11 +920,12 @@ void usage(char *_name)
 	fprintf(stderr,"  -p <serport>        : Serial port device to connect to [/dev/modem]\n");
 	fprintf(stderr,"  -f <framsize>       : Maximum frame size [32]\n");
 	fprintf(stderr,"  -d                  : Debug mode, don't fork\n");
-	fprintf(stderr,"  -m <modem>          : Modem (mc35, generic, ...)\n");
-        fprintf(stderr,"  -b <baudrate>       : MUX mode baudrate (0,9600,19200, ...)\n");
-        fprintf(stderr,"  -P <PIN-code>       : PIN code to fed to the modem\n");
-        fprintf(stderr,"  -s <symlink-prefix> : Prefix for the symlinks of slave devices (e.g. /dev/mux)\n");
-        fprintf(stderr,"  -w                  : Wait for deamon startup success/failure\n");
+	fprintf(stderr,"  -m <modem>          : Modem (mc35, mc75, generic, ...)\n");
+	fprintf(stderr,"  -b <baudrate>       : MUX mode baudrate (0,9600,19200, ...)\n");
+	fprintf(stderr,"  -P <PIN-code>       : PIN code to fed to the modem\n");
+	fprintf(stderr,"  -s <symlink-prefix> : Prefix for the symlinks of slave devices (e.g. /dev/mux)\n");
+	fprintf(stderr,"  -w                  : Wait for deamon startup success/failure\n");
+	fprintf(stderr,"  -r                  : Restart automatically if the modem stops responding\n");
 	fprintf(stderr,"  -h                  : Show this help message\n");
 }
 
@@ -916,18 +934,19 @@ void usage(char *_name)
 * PARAMS:
 * buf - the receiver buffer
 */
-void extract_frames(GSM0710_Buffer * buf)
+int extract_frames(GSM0710_Buffer * buf)
 {
 	// version test for Siemens terminals to enable version 2 functions
 	static char version_test[] = "\x23\x21\x04TEMUXVERSION2\0\0";
+	int framesExtracted = 0;
 
 	GSM0710_Frame *frame;
 
 	if(_debug)
 		syslog(LOG_DEBUG, "is in %s\n" , __FUNCTION__);
-
 	while ((frame = gsm0710_buffer_get_frame(buf)))
 	{
+		++framesExtracted;
 		if ((FRAME_IS(UI, frame) || FRAME_IS(UIH, frame)))
 		{
 			if(_debug)
@@ -1008,8 +1027,12 @@ void extract_frames(GSM0710_Buffer * buf)
 						if (frame->channel == 0)
 						{
 							syslog(LOG_INFO,"Control channel closed.\n");
-							terminate = 1;
-							terminateCount = -1;    // don't need to close channels
+							if (faultTolerant) {
+								restart = 1;
+							} else {
+								terminate = 1;
+								terminateCount = -1;    // don't need to close channels
+							}
 						}
 						else
 						{
@@ -1051,6 +1074,7 @@ void extract_frames(GSM0710_Buffer * buf)
 	}
 	if(_debug)
 		syslog(LOG_DEBUG,"out of %s\n", __FUNCTION__);
+	return framesExtracted;
 }
 
 /** Wait for child process to kill the parent.
@@ -1138,7 +1162,7 @@ void signal_treatment(int param)
  * Fuunction to init Modemd Siemes MC35 families
  * Siemens need and special step-by for after get-in MUX state
  */
-void initSiemensMC35(int baudrate, int pin)
+int initSiemensMC35()
 {
 	char mux_command[] = "AT+CMUX=0\r\n";
     char speed_command[20] = "AT+IPR=57600\r\n";
@@ -1163,7 +1187,7 @@ void initSiemensMC35(int baudrate, int pin)
 	if (!at_command(serial_fd, speed_command, 10000))
 	{
 		if(_debug)
-			syslog(LOG_DEBUG, "ERROR AT+IPR=57600 %d \r\n", __LINE__);
+			syslog(LOG_DEBUG, "ERROR %s %d \r\n", speed_command, __LINE__);
 	}
 	if (!at_command(serial_fd,"AT\r\n", 10000))
 	{
@@ -1181,12 +1205,12 @@ void initSiemensMC35(int baudrate, int pin)
 		if(_debug)
 			syslog(LOG_DEBUG, "ERRO AT\\Q3 %d\r\n", __LINE__);
 	}
-        if (pin > 0 && pin < 10000) 
+        if (pin_code > 0 && pin_code < 10000) 
         {
             // Some modems, such as webbox, will sometimes hang if SIM code
             // is given in virtual channel
             char pin_command[20];
-            sprintf(pin_command, "AT+CPIN=\"%d\"\r\n", pin);
+            sprintf(pin_command, "AT+CPIN=\"%d\"\r\n", pin_code);
             if (!at_command(serial_fd,pin_command, 20000))
             {
 		if(_debug)
@@ -1196,14 +1220,15 @@ void initSiemensMC35(int baudrate, int pin)
 	if (!at_command(serial_fd, mux_command, 10000))
 	{
 		syslog(LOG_ERR, "MUX mode doesn't function.\n");
-		exit(-1);
+		return -1;
 	}
+	return 0;
 }
 
 /**
  * Function to start modems that only needs at+cmux=X to get-in mux state
  */
-void initGeneric(int baudrate, int pin)
+int initGeneric()
 {
 	char mux_command[20] = "AT+CMUX=0\r\n";
     unsigned char close_mux[2] = { C_CLD | CR, 1 };
@@ -1227,12 +1252,12 @@ void initGeneric(int baudrate, int pin)
 		write_frame(0, close_mux, 2, UIH);
         at_command(serial_fd,"AT\r\n", 10000);
 	}
-        if (pin > 0 && pin < 10000) 
+        if (pin_code > 0 && pin_code < 10000) 
         {
             // Some modems, such as webbox, will sometimes hang if SIM code
             // is given in virtual channel
             char pin_command[20];
-            sprintf(pin_command, "AT+CPIN=%d\r\n", pin);
+            sprintf(pin_command, "AT+CPIN=%d\r\n", pin_code);
             if (!at_command(serial_fd,pin_command, 20000))
             {
 		if(_debug)
@@ -1243,34 +1268,114 @@ void initGeneric(int baudrate, int pin)
 	if (!at_command(serial_fd, mux_command, 10000))
 	{
 		syslog(LOG_ERR, "MUX mode doesn't function.\n");
-		exit(-1);
+		return -1;
 	}
+	return 0;
 }
 
+int openDevicesAndMuxMode() {
+	int i;
+	int ret = -1;
+	syslog(LOG_INFO,"Open devices...\n");
+	// open ussp devices
+	maxfd = 0;
+	for (i = 0; i < numOfPorts; i++)
+	{
+		remaining[i] = 0;
+		if ((ussp_fd[i] = open_pty(ptydev[i], i)) < 0)
+		{
+			syslog(LOG_ERR,"Can't open %s. %s (%d).\n", ptydev[i], strerror(errno), errno);
+			return -1;
+		} 
+		else if (ussp_fd[i] > maxfd)
+			maxfd = ussp_fd[i];
+		cstatus[i].opened = 0;
+		cstatus[i].v24_signals = S_DV | S_RTR | S_RTC | EA;
+	}
+	cstatus[i].opened = 0;
+	syslog(LOG_INFO,"Open serial port...\n");
+	
+	// open the serial port
+	if ((serial_fd = open_serialport(serportdev)) < 0)
+	{
+		syslog(LOG_ALERT,"Can't open %s. %s (%d).\n", serportdev, strerror(errno), errno);
+		return -1;
+	}
+	else if (serial_fd > maxfd)
+		maxfd = serial_fd;
+	syslog(LOG_INFO,"Opened serial port. Switching to mux-mode.\n");
 
+	switch(_modem_type)
+	{
+	case MC35:
+		//we coould have other models like XP48 TC45/35
+		ret = initSiemensMC35();
+		break;
+	case GENERIC:
+		ret = initGeneric();
+		break;
+		// case default:
+		// syslog(LOG_ERR, "OOPS Strange modem\n");
+	}
+
+	if (ret != 0) {
+		return ret;
+	}
+	//End Modem Init
+
+	terminateCount = numOfPorts;
+	syslog(LOG_INFO, "Waiting for mux-mode.\n");
+	sleep(1);
+	syslog(LOG_INFO, "Opening control channel.\n");
+	write_frame(0, NULL, 0, SABM | PF);
+	syslog(LOG_INFO, "Opening logical channels.\n");
+	for (i = 1; i <= numOfPorts; i++)
+	{
+		sleep(1);
+		write_frame(i, NULL, 0, SABM | PF);
+		syslog(LOG_INFO, "Connecting %s to virtual channel %d on %s\n", ptsname(ussp_fd[i-1]), i, serportdev);
+	}
+	return ret;
+}
+
+void closeDevices() 
+{
+	int i;
+	close(serial_fd);
+
+	for (i = 0; i < numOfPorts; i++) {
+		char *symlinkName = createSymlinkName(i);
+		close(ussp_fd[i]);
+		if (symlinkName) {
+			// Remove the symbolic link to the slave device
+			unlink(symlinkName);
+			free(symlinkName);
+		}
+	}
+}
 
 /**
  * The main program
  */
 int main(int argc, char *argv[], char *env[])
 {
+#define PING_TEST_LEN 6
+	static char ping_test[] = "\x23\x09PING";
 	//struct sigaction sa;
-	int sel, len, maxfd;
+	int sel, len;
 	fd_set rfds;
 	struct timeval timeout;
 	unsigned char buf[4096], **tmp;
-	int *remaining;
 	char *programName;
 	int i, size,t;
-	int numOfPorts;
-    int baudrate = 0;
 
 	unsigned char close_mux[2] = { C_CLD | CR, 1 };
 	int opt;
-	char *serportdev;
-        int pin_code = 0;
-	char *ptydev[MAX_CHANNELS];
-        pid_t parent_pid;
+	pid_t parent_pid;
+    // for fault tolerance
+	int pingNumber = 1;
+	time_t frameReceiveTime;
+	time_t currentTime;
 
 
 	programName = argv[0];
@@ -1284,7 +1389,7 @@ int main(int argc, char *argv[], char *env[])
 
 	serportdev="/dev/modem";
 
-	while((opt=getopt(argc,argv,"p:f:hdwm:b:P:s:"))>0)
+	while((opt=getopt(argc,argv,"p:f:h?dwrm:b:P:s:"))>0)
 	{
 		switch(opt)
 		{
@@ -1301,22 +1406,27 @@ int main(int argc, char *argv[], char *env[])
 			case 'm':
 				if(!strcmp(optarg,"mc35"))
 					_modem_type = MC35;
+				else if(!strcmp(optarg,"mc75"))
+					_modem_type = MC35;
 				else if(!strcmp(optarg,"generic"))
-						_modem_type = GENERIC;
-					else _modem_type = UNKNOW_MODEM;
+					_modem_type = GENERIC;
+				else _modem_type = UNKNOW_MODEM;
 				break;
-                case 'b':
-                    baudrate = atoi(optarg);
-                    break;
-		case 's':
-  		    devSymlinkPrefix = optarg;
-		    break;
-                case 'w':
-                    wait_for_daemon_status = 1;
-                    break;
-                case 'P':
-                    pin_code = atoi(optarg);
-                    break;
+			case 'b':
+				baudrate = atoi(optarg);
+				break;
+			case 's':
+  		    	devSymlinkPrefix = optarg;
+				break;
+			case 'w':
+				wait_for_daemon_status = 1;
+				break;
+			case 'P':
+				pin_code = atoi(optarg);
+				break;
+			case 'r':
+				faultTolerant = 1;
+				break;
 			case '?' :
 			case 'h' :
 				usage(programName);
@@ -1328,7 +1438,7 @@ int main(int argc, char *argv[], char *env[])
 	}
 	//DAEMONIZE
 	//SHOW TIME
-        parent_pid = getpid();
+	parent_pid = getpid();
 	daemonize(_debug);
 	//The Hell is from now-one
 
@@ -1374,77 +1484,18 @@ int main(int argc, char *argv[], char *env[])
 		syslog(LOG_ALERT,"Out of memory\n");
 		exit(-1);
 	}
-	syslog(LOG_INFO,"Open devices...\n");
-	// open ussp devices
-	maxfd = 0;
-	for (i = 0; i < numOfPorts; i++)
-	{
-		remaining[i] = 0;
-		if ((ussp_fd[i] = open_pty(ptydev[i], i)) < 0)
-		{
-			syslog(LOG_ERR,"Can't open %s. %s (%d).\n", ptydev[i], strerror(errno), errno);
-			exit(-1);
-		}
-		else if (ussp_fd[i] > maxfd)
-			maxfd = ussp_fd[i];
-		cstatus[i].opened = 0;
-		cstatus[i].v24_signals = S_DV | S_RTR | S_RTC | EA;
-	}
-	cstatus[i].opened = 0;
-	terminateCount = numOfPorts;
-	syslog(LOG_INFO,"Open serial port...\n");
 
-	// open the serial port
-	if ((serial_fd = open_serialport(serportdev,baudrate)) < 0)
-	{
-		syslog(LOG_ALERT,"Can't open %s. %s (%d).\n", serportdev, strerror(errno), errno);
+	// Initialize modem and virtual ports
+	if (openDevicesAndMuxMode() != 0) {
 		return -1;
 	}
-	else if (serial_fd > maxfd)
-		maxfd = serial_fd;
 
-	syslog(LOG_INFO,"Opened serial port. Switching to mux-mode.\n");
-
-	/**
-	 * heere we muste agree with some method of hardware initialization
-	 * the following lines is for Siemens MC35i and are according Developers Device Drivers Manual
-	 * from Siemens because this i put inside an IFDEF until we agree
-	 * in a final solution
-	 */
-
-	switch(_modem_type)
-	{
-		case MC35:
-			initSiemensMC35(baudrate, pin_code); //we coould have other models like XP48 TC45/35
-			break;
-		case GENERIC:
-			initGeneric(baudrate, pin_code);
-			break;
-		//case default:
-		//	syslog(LOG_ERR, "OOPS Strange modem\n");
-		//	break;
+	if(_debug) {
+		syslog(LOG_INFO, 
+			   "You can quit the MUX daemon with SIGKILL or SIGTERM\n");
+	} else if (wait_for_daemon_status) {
+		kill(parent_pid, SIGHUP);
 	}
-
-	//End Modem Init
-
-	syslog(LOG_INFO, "Waiting for mux-mode.\n");
-	sleep(1);
-	syslog(LOG_INFO, "Opening control channel.\n");
-	write_frame(0, NULL, 0, SABM | PF);
-	syslog(LOG_INFO, "Opening logical channels.\n");
-	for (i = 1; i <= numOfPorts; i++)
-	{
-		sleep(1);
-		write_frame(i, NULL, 0, SABM | PF);
-		syslog(LOG_INFO, "Connecting %s to virtual channel %d on %s\n", ptsname(ussp_fd[i-1]), i, serportdev);
-	}
-	if(_debug)
-	syslog(LOG_INFO, "You can quit the MUX daemon with SIGKILL or SIGTERM\n");
-        else {
-            if (wait_for_daemon_status) {
-                kill(parent_pid, SIGHUP);
-            }
-        }
 
 	/**
 	 * SUGGESTION:
@@ -1462,7 +1513,12 @@ int main(int argc, char *argv[], char *env[])
 		timeout.tv_sec = 1;
 		timeout.tv_usec = 0;
 
-		if ((sel = select(maxfd + 1, &rfds, NULL, NULL, &timeout)) > 0)
+		sel = select(maxfd + 1, &rfds, NULL, NULL, &timeout);
+		if (faultTolerant) {
+			// get the current time
+			time(&currentTime);
+		}
+		if (sel > 0)
 		{
 
 			if (FD_ISSET(serial_fd, &rfds))
@@ -1474,7 +1530,10 @@ int main(int argc, char *argv[], char *env[])
 				{
 					gsm0710_buffer_write(in_buf, buf, len);
 					// extract and handle ready frames
-					extract_frames(in_buf);
+					if (extract_frames(in_buf) > 0 && faultTolerant) {
+						frameReceiveTime = currentTime;
+						pingNumber = 1;
+					}
 				}
 			}
 
@@ -1535,23 +1594,46 @@ int main(int argc, char *argv[], char *env[])
 				write_frame(0, close_mux, 2, UIH);
 			}
 			terminateCount--;
+		} else if (faultTolerant) {
+			if (restart || pingNumber >= MAX_PINGS) {
+				if (restart == 0) {
+					// Modem seems to be dead
+					syslog(LOG_ALERT,
+						   "Modem is not responding trying to restart the mux.\n");
+				} else {
+					// Modem has closed down the multiplexer mode
+					restart = 0;
+					syslog(LOG_INFO, "Trying to restart the mux.\n");
+				}
+				do {
+					closeDevices();
+					terminateCount = -1;
+					sleep(1);
+					if (openDevicesAndMuxMode() == 0) {
+						// The modem is up again
+						time(&frameReceiveTime);
+						pingNumber = 1;
+						break;
+					}
+					sleep(POLLING_INTERVAL);
+				} while (!terminate);
+				
+			} else if (frameReceiveTime + POLLING_INTERVAL*pingNumber < 
+					   currentTime) {
+				// Nothing has been received for a while -> test the modem
+				if (_debug) {
+					syslog(LOG_DEBUG,"Sending PING to the modem.\n");
+				}
+				write_frame(0, ping_test, PING_TEST_LEN, UIH);
+				++pingNumber;
+			}
 		}
 
 	}                           /* while */
 
 	// finalize everything
+	closeDevices();
 
-	close(serial_fd);
-
-	for (i = 0; i < numOfPorts; i++) {
-                char *symlinkName = createSymlinkName(i);
-		close(ussp_fd[i]);
-                if (symlinkName) {
-                    // Remove the symbolic link to the slave device
-                    unlink(symlinkName);
-                    free(symlinkName);
-                }
-        }
 	free(ussp_fd);
 	free(tmp);
 	free(remaining);

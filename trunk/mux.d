@@ -15,7 +15,7 @@ gsmMuxExe=/usr/sbin/gsmMuxd
 executable=gsmMuxd
 prog=gsmMuxd
 RETVAL=0
-OPTIONS="-p /dev/ttyUSB0 -w -s /dev/mux /dev/ptmx /dev/ptmx /dev/ptmx"
+OPTIONS="-p /dev/ttyUSB0 -w -r -s /dev/mux /dev/ptmx /dev/ptmx /dev/ptmx"
 
 # Functions
 start() {

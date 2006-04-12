@@ -26,7 +26,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
-
+#include <syslog.h>
 
 const unsigned char r_crctable[256] = { //reversed, 8-bit, poly=0x07 
   0x00, 0x91, 0xE3, 0x72, 0x07, 0x96, 0xE4, 0x75, 
@@ -181,13 +181,13 @@ GSM0710_Frame *gsm0710_buffer_get_frame(GSM0710_Buffer *buf) {
 	    fcs = r_crctable[fcs^(frame->data[end])];
 	}
       } else {
-	PDEBUG("Out of memory, when allocating space for frame data.\n");
+	syslog(LOG_ALERT,"Out of memory, when allocating space for frame data.\n");
 	frame->data_length = 0;
       }
     }
     // check FCS
     if (r_crctable[fcs^(*data)] != 0xCF) {
-      PDEBUG("Dropping frame: FCS doesn't match\n");
+      syslog(LOG_INFO,"Dropping frame: FCS doesn't match\n");
       destroy_frame(frame);
       buf->flag_found = 0;
       buf->dropped_count++;
@@ -197,7 +197,7 @@ GSM0710_Frame *gsm0710_buffer_get_frame(GSM0710_Buffer *buf) {
       // check end flag
       INC_BUF_POINTER(buf,data);
       if (*data != F_FLAG) {
-	PDEBUG("Dropping frame: End flag not found. Instead: %d\n", *data);
+	syslog(LOG_WARNING, "Dropping frame: End flag not found. Instead: %d\n", *data);
 	destroy_frame(frame);
 	buf->flag_found = 0;
 	buf->dropped_count++;
