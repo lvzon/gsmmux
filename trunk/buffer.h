@@ -38,6 +38,14 @@ typedef struct GSM0710_Frame {
 
 #define GSM0710_BUFFER_SIZE 2048
 
+// for storing tempoary GSM0710_Buffer data in advanced option mode
+typedef struct ADV_TmpBuffer
+{
+	unsigned char data[GSM0710_BUFFER_SIZE];
+	int size;
+	int esc_found;
+} ADV_TmpBuffer;
+
 typedef struct GSM0710_Buffer {
   unsigned char data[GSM0710_BUFFER_SIZE];
   unsigned char *readp;
@@ -46,6 +54,7 @@ typedef struct GSM0710_Buffer {
   int flag_found; // set if last character read was flag
   unsigned long received_count;
   unsigned long dropped_count;
+	ADV_TmpBuffer *advtmp;
 } GSM0710_Buffer;
 
 // increases buffer pointer by one and wraps around if necessary
@@ -120,6 +129,16 @@ int gsm0710_buffer_write(GSM0710_Buffer *buf, const char *input, int count);
  * frame or null, if there isn't ready frame with given index
  */
 GSM0710_Frame *gsm0710_buffer_get_frame(GSM0710_Buffer *buf);
+
+/* Gets a advanced option frame from buffer. You have to remember to free this frame
+ * when it's not needed anymore
+ *
+ * PARAMS:
+ * buf   - the buffer, where the frame is extracted
+ * RETURNS:
+ * frame or null, if there isn't ready frame with given index
+ */
+GSM0710_Frame *gsm0710_buffer_adv_get_frame(GSM0710_Buffer *buf);
 
 // destroys a frame
 void destroy_frame(GSM0710_Frame *frame);

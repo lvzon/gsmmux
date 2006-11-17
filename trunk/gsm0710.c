@@ -51,6 +51,13 @@
 *  - fixed open_pty function to grant right for Unix98 scheme pseudo
 *    terminals even though symlinks are not in use
 *
+* Modified October 2006 by Vasiliy Novikov <vn@hotbox.ru>
+*  - Added support for Benq M22a, M23a modules. These modules don't support
+*	 basic multiplexer mode.
+*  - Added support for advanced non error recovery mode.
+*  - Added -n option: no daemon, don't fork, without debug messages.
+*
+*
 * New Usage:
 * gsmMuxd [options] <pty1> <pty2> ...
 *
@@ -100,6 +107,7 @@
 #define UNKNOW_MODEM	0
 #define MC35		1
 #define GENERIC		2
+#define M22A		3
 // Defines how often the modem is polled when automatic restarting is enabled
 // The value is in seconds
 #define POLLING_INTERVAL 5
@@ -117,6 +125,7 @@ static int wait_for_daemon_status = 0;
 static GSM0710_Buffer *in_buf;  // input buffer
 
 static int _debug = 0;
+static int _no_daemon = 0;
 static pid_t the_pid;
 int _priority;
 int _modem_type;
@@ -129,6 +138,9 @@ static int baudrate = 0;
 static int *remaining;
 static int faultTolerant = 0;
 static int restart = 0;
+// for benq m22a that supports only advanced option.
+static int advanced_option = 0;
+static unsigned char *adv_frame_buf;
 
 /* The following arrays must have equal length and the values must 
  * correspond.
@@ -184,6 +196,30 @@ int ussp_connected(int port)
 #endif
 }
 
+/** Escapes ADV_ESCAPED_SYMS characters.
+ * returns escaped buffer size.
+ */
+int fill_adv_frame_buf(unsigned char *adv_buf, const unsigned char *data, int count)
+{
+	static const unsigned char esc[] = ADV_ESCAPED_SYMS;
+	int i, esc_i, adv_i = 0;
+
+	for(i = 0; i < count; ++i, ++adv_i)
+	{
+		adv_buf[adv_i] = data[i];
+		for(esc_i = 0; esc_i < sizeof(esc)/sizeof(esc[0]); ++esc_i)
+			if(data[i] == esc[esc_i])
+			{
+				adv_buf[adv_i] = F_ADV_ESC;
+				++adv_i;
+				adv_buf[adv_i] = data[i] ^ F_ADV_ESC_COPML;
+				break;
+			}
+	}
+
+	return adv_i;
+}
+
 /** Writes a frame to a logical channel. C/R bit is set to 1.
 * Doesn't support FCS counting for UI frames.
 *
@@ -197,7 +233,7 @@ int ussp_connected(int port)
 * RETURNS:
 * number of characters written
 */
-int write_frame(int channel, const char *input, int count, unsigned char type)
+int write_frame(int channel, const unsigned char *input, int count, unsigned char type)
 {
 	// flag, EA=1 C channel, frame type, length 1-2
 	unsigned char prefix[5] = { F_FLAG, EA | CR, 0, 0, 0 };
@@ -214,6 +250,11 @@ int write_frame(int channel, const char *input, int count, unsigned char type)
 	// let's not use too big frames
 	count = min(max_frame_size, count);
 
+	if(!advanced_option)
+	{
+		// CRC checksum
+		postfix[0] = make_fcs(prefix + 1, prefix_length - 1);
+
 	// length
 	if (count > 127)
 	{
@@ -225,8 +266,6 @@ int write_frame(int channel, const char *input, int count, unsigned char type)
 	{
 		prefix[3] = 1 | (count << 1);
 	}
-	// CRC checksum
-	postfix[0] = make_fcs(prefix + 1, prefix_length - 1);
 
 	c = write(serial_fd, prefix, prefix_length);
 	if (c != prefix_length)
@@ -251,6 +290,27 @@ int write_frame(int channel, const char *input, int count, unsigned char type)
 		if(_debug)
 			syslog(LOG_DEBUG,"Couldn't write the whole postfix to the serial port for the virtual port %d. Wrote only %d bytes.", channel, c);
 		return 0;
+	}
+	}
+	else // advanced_option
+	{
+		int offs = 1;
+		adv_frame_buf[0] = F_ADV_FLAG;
+		offs += fill_adv_frame_buf(adv_frame_buf + offs, prefix+1, 2);	// address, control
+		offs += fill_adv_frame_buf(adv_frame_buf + offs, input, count); // data
+		// CRC checksum
+		postfix[0] = make_fcs(prefix + 1, 2);
+		offs += fill_adv_frame_buf(adv_frame_buf + offs, postfix, 1);	// fcs
+		adv_frame_buf[offs] = F_ADV_FLAG;
+		++offs;
+
+		c = write(serial_fd, adv_frame_buf, offs);
+		if (c != offs)
+		{
+			if(_debug)
+				syslog(LOG_DEBUG,"Couldn't write the whole advanced option packet to the serial port for the virtual port %d. Wrote only %d bytes.", channel, c);
+			return 0;
+		}
 	}
 
 	return count;
@@ -920,7 +980,8 @@ void usage(char *_name)
 	fprintf(stderr,"  -p <serport>        : Serial port device to connect to [/dev/modem]\n");
 	fprintf(stderr,"  -f <framsize>       : Maximum frame size [32]\n");
 	fprintf(stderr,"  -d                  : Debug mode, don't fork\n");
-	fprintf(stderr,"  -m <modem>          : Modem (mc35, mc75, generic, ...)\n");
+	fprintf(stderr,"  -n                  : No daemon, don't fork, without debug messages\n");
+	fprintf(stderr,"  -m <modem>          : Modem (mc35, mc75, generic, m22a, m23a, ...)\n");
 	fprintf(stderr,"  -b <baudrate>       : MUX mode baudrate (0,9600,19200, ...)\n");
 	fprintf(stderr,"  -P <PIN-code>       : PIN code to fed to the modem\n");
 	fprintf(stderr,"  -s <symlink-prefix> : Prefix for the symlinks of slave devices (e.g. /dev/mux)\n");
@@ -944,7 +1005,7 @@ int extract_frames(GSM0710_Buffer * buf)
 
 	if(_debug)
 		syslog(LOG_DEBUG, "is in %s\n" , __FUNCTION__);
-	while ((frame = gsm0710_buffer_get_frame(buf)))
+	while ((frame = advanced_option?gsm0710_buffer_adv_get_frame(buf):gsm0710_buffer_get_frame(buf)) )
 	{
 		++framesExtracted;
 		if ((FRAME_IS(UI, frame) || FRAME_IS(UIH, frame)))
@@ -1089,7 +1150,7 @@ void parent_signal_treatment(int param) {
  */
 int daemonize(int _debug)
 {
-	if(!_debug)
+	if(!_debug && !_no_daemon)
 	{
 	        signal(SIGHUP, parent_signal_treatment);
                 if((the_pid=fork()) < 0) {
@@ -1273,6 +1334,58 @@ int initGeneric()
 	return 0;
 }
 
+/**
+ * Function to start modems that supports non error recovery advansed option mode
+ */
+int initBenqM22a()
+{
+	char mux_command[20] = "AT+CMUX=1\r\n";
+//    unsigned char close_mux[2] = { C_CLD | CR, 1 };
+
+    int baud = indexOfBaud(baudrate);
+    if (baud != 0) {
+        // Setup the speed explicitly, if given
+        sprintf(mux_command, "AT+CMUX=1,0,%d\r\n", baud);
+    }
+
+	advanced_option = 1;
+	adv_frame_buf = (unsigned char*)malloc((max_frame_size+3)*2 + 2);
+	
+	/**
+	 * Modem Init like Sony
+	 */
+	if (!at_command(serial_fd,"AT\r\n", 10000))
+	{
+		if(_debug)
+			syslog(LOG_DEBUG, "ERROR AT %d\r\n", __LINE__);
+
+        syslog(LOG_INFO, "Modem does not respond to AT commands, trying close MUX mode");
+#if 0 // multiplexer close down command doesn't work with benqM22a module
+		write_frame(0, NULL, 0, C_CLD | CR);
+#else
+		write_frame(0, NULL, 0, DISC | PF);
+#endif
+        at_command(serial_fd,"AT\r\n", 10000);
+	}
+	if (pin_code > 0 && pin_code < 10000) 
+	{
+		// Some modems, such as webbox, will sometimes hang if SIM code
+		// is given in virtual channel
+		char pin_command[20];
+		sprintf(pin_command, "AT+CPIN=%d\r\n", pin_code);
+		if (!at_command(serial_fd,pin_command, 20000))
+		{
+			if(_debug)
+				syslog(LOG_DEBUG, "ERROR AT+CPIN %d\r\n", __LINE__);
+		}
+	}
+
+    // m22a doesn't answer to CMUX command
+	at_command(serial_fd, mux_command, 0);
+
+	return 0;
+}
+
 int openDevicesAndMuxMode() {
 	int i;
 	int ret = -1;
@@ -1313,6 +1426,9 @@ int openDevicesAndMuxMode() {
 		break;
 	case GENERIC:
 		ret = initGeneric();
+		break;
+	case M22A:
+		ret = initBenqM22a();
 		break;
 		// case default:
 		// syslog(LOG_ERR, "OOPS Strange modem\n");
@@ -1389,7 +1505,7 @@ int main(int argc, char *argv[], char *env[])
 
 	serportdev="/dev/modem";
 
-	while((opt=getopt(argc,argv,"p:f:h?dwrm:b:P:s:"))>0)
+	while((opt=getopt(argc,argv,"p:f:h?dnwrm:b:P:s:"))>0)
 	{
 		switch(opt)
 		{
@@ -1403,6 +1519,9 @@ int main(int argc, char *argv[], char *env[])
 			case 'd' :
 				_debug = 1;
 				break;
+			case 'n' :
+				_no_daemon = 1;
+				break;
 			case 'm':
 				if(!strcmp(optarg,"mc35"))
 					_modem_type = MC35;
@@ -1410,6 +1529,10 @@ int main(int argc, char *argv[], char *env[])
 					_modem_type = MC35;
 				else if(!strcmp(optarg,"generic"))
 					_modem_type = GENERIC;
+				else if(!strcmp(optarg,"m22a"))
+					_modem_type = M22A;
+				else if(!strcmp(optarg,"m23a"))
+					_modem_type = M22A;
 				else _modem_type = UNKNOW_MODEM;
 				break;
 			case 'b':
@@ -1591,6 +1714,13 @@ int main(int argc, char *argv[], char *env[])
 			else if (terminateCount == 0)
 			{
 				syslog(LOG_INFO,"Sending close down request to the multiplexer.\n");
+				if(advanced_option)
+#if 0 // multiplexer close down command doesn't work with benqM22a module
+					write_frame(0, NULL, 0, C_CLD | CR);
+#else
+					write_frame(0, NULL, 0, DISC | PF);
+#endif
+				else
 				write_frame(0, close_mux, 2, UIH);
 			}
 			terminateCount--;
@@ -1637,6 +1767,7 @@ int main(int argc, char *argv[], char *env[])
 	free(ussp_fd);
 	free(tmp);
 	free(remaining);
+	free(adv_frame_buf);
 	syslog(LOG_INFO,"Received %ld frames and dropped %ld received frames during the mux-mode.\n", in_buf->received_count,
 		in_buf->dropped_count);
 	gsm0710_buffer_destroy(in_buf);

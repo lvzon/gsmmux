@@ -79,11 +79,14 @@ GSM0710_Buffer *gsm0710_buffer_init() {
     buf->readp = buf->data;
     buf->writep = buf->data;
     buf->endp = buf->data + GSM0710_BUFFER_SIZE;
+		buf->advtmp = 0;
   }
   return buf;
 }
 
 void gsm0710_buffer_destroy(GSM0710_Buffer *buf) {
+	if(buf->advtmp)
+		free(buf->advtmp);
   free(buf);
 }
 
@@ -213,14 +216,119 @@ GSM0710_Frame *gsm0710_buffer_get_frame(GSM0710_Buffer *buf) {
   return frame;
 }
 
+GSM0710_Frame *gsm0710_buffer_adv_get_frame(GSM0710_Buffer *buf) {
+	if(!buf->advtmp)
+	{
+		buf->advtmp = (ADV_TmpBuffer*)malloc(sizeof(ADV_TmpBuffer));
+		memset(buf->advtmp, 0, sizeof(ADV_TmpBuffer));
+}
+
+l_begin:
+
+	// Find start flag
+	while (!buf->flag_found && gsm0710_buffer_length(buf) > 0) {
+		if (*buf->readp == F_ADV_FLAG)
+		{
+			buf->flag_found = 1;
+			buf->advtmp->size = 0;
+			buf->advtmp->esc_found = 0;
+		}
+		INC_BUF_POINTER(buf, buf->readp);
+	}
+
+	if (!buf->flag_found) // no frame started
+		return NULL;
+
+	if(0 == buf->advtmp->size)
+		// skip empty frames (this causes troubles if we're using DLC 62)
+		while (gsm0710_buffer_length(buf) > 0 && (*buf->readp == F_ADV_FLAG)) {
+			INC_BUF_POINTER(buf, buf->readp);
+		}
+
+	while(gsm0710_buffer_length(buf) > 0)
+	{
+		if(!buf->advtmp->esc_found && F_ADV_FLAG == *(buf->readp))
+		{ // closing flag found
+			GSM0710_Frame *frame;
+			unsigned char *data = buf->advtmp->data;
+			unsigned char fcs = 0xFF;
+
+			INC_BUF_POINTER(buf, buf->readp);
+
+			if(buf->advtmp->size < 3)
+			{
+				syslog(LOG_INFO,"Too short adv frame, length:%d\n", buf->advtmp->size);
+				buf->flag_found = 0;
+				goto l_begin;
+			}
+
+			frame = (GSM0710_Frame *)malloc(sizeof(GSM0710_Frame));
+
+			frame->channel = ((data[0] & 252) >> 2);
+			fcs = r_crctable[fcs ^ data[0]];
+
+			frame->control = data[1];
+			fcs = r_crctable[fcs ^ data[1]];
+
+			frame->data_length = buf->advtmp->size - 3;
+			//extract data
+			if (frame->data_length > 0) {
+				if ((frame->data = (unsigned char*)malloc(sizeof(char)*frame->data_length))) {
+					memcpy(frame->data, data + 2, frame->data_length);
+					if (FRAME_IS(UI, frame)) {
+						int i;
+						for (i = 0; i < frame->data_length; ++i)
+							fcs = r_crctable[fcs^(frame->data[i])];
+					}
+				} else {
+					syslog(LOG_ALERT,"Out of memory, when allocating space for frame data.\n");
+					buf->flag_found = 0;
+					goto l_begin;
+				}
+			}
+			// check FCS
+			if (r_crctable[fcs ^ data[buf->advtmp->size-1]] != 0xCF) {
+				syslog(LOG_INFO,"Dropping frame: FCS doesn't match\n");
+				destroy_frame(frame);
+				buf->flag_found = 0;
+				buf->dropped_count++;
+				goto l_begin;
+			} else {
+				buf->received_count++;
+				buf->flag_found = 0;
+				return frame;
+			}
+		}
+
+		if(buf->advtmp->size >= sizeof(buf->advtmp->data))
+		{
+			syslog(LOG_INFO,"Too long adv frame, length:%d\n", buf->advtmp->size);
+			buf->flag_found = 0;
+			buf->dropped_count++;
+			goto l_begin;
+		}
+		
+		if(buf->advtmp->esc_found)
+		{
+			buf->advtmp->data[buf->advtmp->size] = *(buf->readp) ^ F_ADV_ESC_COPML;
+			++(buf->advtmp->size);
+			buf->advtmp->esc_found = 0;
+		}
+		else if(F_ADV_ESC == *(buf->readp))
+			buf->advtmp->esc_found = 1;
+		else
+		{
+			buf->advtmp->data[buf->advtmp->size] = *(buf->readp);
+			++(buf->advtmp->size);
+		}
+		INC_BUF_POINTER(buf, buf->readp);
+	}
+
+	return NULL;
+}
+
 void destroy_frame(GSM0710_Frame *frame) {
   if (frame->data_length > 0)
     free(frame->data);
   free(frame);
 }
-
-
-
-
-
-

@@ -34,23 +34,31 @@
 
 // basic mode flag for frame start and end
 #define F_FLAG 0xF9
+// advanced mode flag for frame start and end
+#define F_ADV_FLAG 0x7E
+// advanced mode escape symbol
+#define F_ADV_ESC 0x7D
+// advanced mode escape complement mask
+#define F_ADV_ESC_COPML 0x20
+// advanced mode escaped symbols: Flag, Escape, XON and XOFF
+#define ADV_ESCAPED_SYMS { F_ADV_FLAG, F_ADV_ESC, 0x11, 0x91, 0x13, 0x93 }
 
 // bits: Poll/final, Command/Response, Extension
-#define PF 16
-#define CR 2
-#define EA 1
+#define PF 0x10			//16
+#define CR 0x02			//2
+#define EA 0x01			//1
 // the types of the frames
-#define SABM 47
-#define UA 99
-#define DM 15
-#define DISC 67
-#define UIH 239
-#define UI 3
+#define SABM 0x2F		//47
+#define UA   0x63		//99
+#define DM   0x0F		//15
+#define DISC 0x43		//67
+#define UIH  0xEF		//239
+#define UI	 0x03		//3
 // the types of the control channel commands
-#define C_CLD 193
-#define C_TEST 33
-#define C_MSC 225
-#define C_NSC 17
+#define C_CLD	0xC1		//193
+#define C_TEST	0x21		//33
+#define C_MSC   0xE1		//225
+#define C_NSC	0x11		//17
 // V.24 signals: flow control, ready to communicate, ring indicator, data valid
 // three last ones are not supported by Siemens TC_3x
 #define S_FC 2
