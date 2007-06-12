@@ -4,12 +4,17 @@ Copyright (C) 2003 Tuukka Karvonen <tkarvone@iki.fi>
 Modified 2004/2005 by David Jander <david@protonic.nl>
 Development continued in Berlios GSM Multiplexer Daemon project
 
-Introduction
+Introduction:
+============
 
   This driver is based on the work of Tuukka Karvonen, (see
   README.orig) and has been modified to work with pseudo-tty's
   instead. This is far from complete. Please refer to README.orig for 
-  more information about the GSM07.10 implementation. The driver is
+  more information about the GSM07.10 implementation. 
+  
+Supported Devices:
+=================
+  The driver is
   known to work with the following modems:
 
   - Sony-Ericsson GM29 
@@ -18,8 +23,10 @@ Introduction
   - Siemens MC75
   - Sony-Ericsson GM47/GM48 (not tested with the most recent version of 
                              the driver)
+  - Benq M22a & M23a
 
-Instructions for Use
+Instructions for Use:
+====================
 
   ./gsmMuxd [options] <pty1> <pty2> ...
     <ptyN>              : pty devices (e.g. /dev/ptya0, or /dev/ptmx)
@@ -53,7 +60,8 @@ Instructions for Use
   with static names to the dynamically changing virtual serial port
   pseudo TTY slave devices.
 
-INSTALLATION
+INSTALLATION:
+============
 
   To make the daemon start at system boot:
   1. Copy gsmMuxd to /usr/sbin/
@@ -67,3 +75,12 @@ INSTALLATION
 
   Note that installation varies on different systems. The steps above
   should work at least on Red Hat linux distributions.
+
+Required tools:
+==============
+- GCC;
+- Binutils;
+- Make or GMake;
+- Ident;
+- Editor such as vi, gvim or so on;
+
