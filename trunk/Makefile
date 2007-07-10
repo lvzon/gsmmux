@@ -2,6 +2,7 @@
 DEBUG = y
 
 TARGET = gsmMuxd
+INSTALLPATH = /usr/local/bin
 SRC = gsm0710.c buffer.c
 OBJS = gsm0710.o buffer.o
 
@@ -25,5 +26,10 @@ clean:
 
 $(TARGET): $(OBJS)
 	$(LD) $(LDLIBS) -o $@ $(OBJS)
+
+install: $(TARGET)
+	install -D -o root -g root -s $(TARGET) $(INSTALLPATH)/$(TARGET)
+	@echo "NOTE: if you want to use the automatic startup script mux.d, you need to"
+	@echo "install it manually and make sure it is called at startup (e.g. through SYS-V init)"
 
 .PHONY: all clean

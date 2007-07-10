@@ -10,8 +10,8 @@
 # Source function library.
 . /etc/init.d/functions
 
-# Path to mobilegw binary, and short-form for messages
-gsmMuxExe=/usr/sbin/gsmMuxd
+# Path to gsmMuxd binary, and short-form for messages
+gsmMuxExe=/usr/local/bin/gsmMuxd
 executable=gsmMuxd
 prog=gsmMuxd
 RETVAL=0
