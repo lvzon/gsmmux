@@ -269,12 +269,13 @@
 								<string>B359AB891018E3C20008AA04</string>
 								<string>08FB7795FE84155DC02AAC07</string>
 								<string>C6A0FF2B0290797F04C91782</string>
+								<string>1AB674ADFE9D54B511CA2CBB</string>
 								<string>1C37FABC05509CD000000102</string>
 							</array>
 							<key>PBXSmartGroupTreeModuleOutlineStateSelectionKey</key>
 							<array>
 								<array>
-									<integer>4</integer>
+									<integer>3</integer>
 									<integer>1</integer>
 									<integer>0</integer>
 								</array>
@@ -319,7 +320,7 @@
 								<key>PBXProjectModuleGUID</key>
 								<string>1CE0B20306471E060097A5F4</string>
 								<key>PBXProjectModuleLabel</key>
-								<string>gsm0710.c</string>
+								<string>README</string>
 								<key>PBXSplitModuleInNavigatorKey</key>
 								<dict>
 									<key>Split0</key>
@@ -327,19 +328,20 @@
 										<key>PBXProjectModuleGUID</key>
 										<string>1CE0B20406471E060097A5F4</string>
 										<key>PBXProjectModuleLabel</key>
-										<string>gsm0710.c</string>
+										<string>README</string>
 										<key>_historyCapacity</key>
 										<integer>0</integer>
 										<key>bookmark</key>
-										<string>B359ABA71018ED150008AA04</string>
+										<string>B359ABC11018EDEC0008AA04</string>
 										<key>history</key>
 										<array>
 											<string>B359AB951018ED150008AA04</string>
-											<string>B359AB961018ED150008AA04</string>
-											<string>B359AB971018ED150008AA04</string>
 											<string>B359AB981018ED150008AA04</string>
-											<string>B359AB991018ED150008AA04</string>
-											<string>B359AB9A1018ED150008AA04</string>
+											<string>B359ABB61018EDEC0008AA04</string>
+											<string>B359ABB71018EDEC0008AA04</string>
+											<string>B359ABB81018EDEC0008AA04</string>
+											<string>B359ABB91018EDEC0008AA04</string>
+											<string>B359AB961018ED150008AA04</string>
 										</array>
 										<key>prevStack</key>
 										<array>
@@ -355,6 +357,13 @@
 											<string>B359ABA41018ED150008AA04</string>
 											<string>B359ABA51018ED150008AA04</string>
 											<string>B359ABA61018ED150008AA04</string>
+											<string>B359ABBA1018EDEC0008AA04</string>
+											<string>B359ABBB1018EDEC0008AA04</string>
+											<string>B359ABBC1018EDEC0008AA04</string>
+											<string>B359ABBD1018EDEC0008AA04</string>
+											<string>B359ABBE1018EDEC0008AA04</string>
+											<string>B359ABBF1018EDEC0008AA04</string>
+											<string>B359ABC01018EDEC0008AA04</string>
 										</array>
 									</dict>
 									<key>SplitCount</key>
@@ -977,6 +986,8 @@
 							<string>0pt</string>
 						</dict>
 						<dict>
+							<key>BecomeActive</key>
+							<true/>
 							<key>ContentConfiguration</key>
 							<dict>
 								<key>PBXCVSModuleFilterTypeKey</key>
