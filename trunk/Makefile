@@ -20,12 +20,13 @@ all: $(TARGET)
 
 clean:
 	rm -f $(OBJS) $(TARGET)
-	rm -r build
+	rm -rf build
+	mkdir build
 
 build/buffer.o:
 	$(CC) $(CFLAGS) -I./src -c -o build/buffer.o src/buffer.c
 	 
-build/gsm0710.o:
+build/gsm0710.o: build/buffer.o
 	$(CC) $(CFLAGS) -I./src -c -o build/gsm0710.o src/gsm0710.c build/buffer.o
 
 %.o: %.c
