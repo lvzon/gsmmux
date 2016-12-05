@@ -23,6 +23,7 @@ Supported Devices:
   - Siemens MC35
   - Siemens MC35i
   - Siemens MC75
+  - iRZ MC52iT
   - Sony-Ericsson GM47/GM48 (not tested with the most recent version of 
                              the driver)
   - Benq M22a & M23a
