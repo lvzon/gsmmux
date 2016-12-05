@@ -110,6 +110,7 @@
 #define GENERIC		2
 #define M22A		3
 #define IRZ52IT		4
+#define GL865		5
 
 // Defines how often the modem is polled when automatic restarting is
 // enabled
@@ -1053,7 +1054,7 @@ usage (
   fprintf (stderr,
 	   "  -n                  : No daemon, don't fork, without debug messages\n");
   fprintf (stderr,
-	   "  -m <modem>          : Modem (mc35, mc75, generic, m22a, m23a, ...)\n");
+	   "  -m <modem>          : Modem (mc35, mc75, generic, m22a, m23a, gl865, ...)\n");
   fprintf (stderr,
 	   "  -b <baudrate>       : MUX mode baudrate (0,9600,19200, ...)\n");
   fprintf (stderr, "  -P <PIN-code>       : PIN code to fed to the modem\n");
@@ -1409,6 +1410,72 @@ int initIRZ52IT()
 	return 0;
 }
 
+
+int initTelit()
+{
+	char mux_command[] = "AT+CMUX=0\r\n";
+    char speed_command[20] = "AT+IPR=9600\r\n";
+	unsigned char close_mux[2] = { C_CLD | CR, 1 };
+
+
+    int baud = indexOfBaud(baudrate);
+	if (!at_command(serial_fd,"AT\r\n", 10000))
+	{
+		if(_debug)
+			syslog(LOG_DEBUG, "ERROR AT %d\r\n", __LINE__);
+
+        syslog(LOG_INFO, "Modem does not respond to AT commands, trying close MUX mode");
+		write_frame(0, close_mux, 2, UIH);
+        at_command(serial_fd,"AT\r\n", 10000);
+	}
+
+	if (!at_command(serial_fd,"AT&K0\r\n", 10000))
+	{
+		if(_debug)
+			syslog(LOG_DEBUG, "ERROR AT&K0 %d \r\n", __LINE__);
+	}
+    if (baud != 0) {
+        sprintf(speed_command, "AT+IPR=%d\r\n", baudrate);
+    }
+	if (!at_command(serial_fd, speed_command, 10000))
+	{
+		if(_debug)
+			syslog(LOG_DEBUG, "ERROR %s %d \r\n", speed_command, __LINE__);
+	}
+	if (!at_command(serial_fd,"AT\r\n", 10000))
+	{
+		if(_debug)
+			syslog(LOG_DEBUG, "ERROR AT %d \r\n", __LINE__);
+	}
+
+	if (!at_command(serial_fd,"AT&S0\r\n", 10000))
+	{
+		if(_debug)
+			syslog(LOG_DEBUG, "ERRO AT&S0 %d\r\n", __LINE__);
+	}
+	if (!at_command(serial_fd,"AT\\Q0\r\n", 10000))
+	{
+		if(_debug)
+			syslog(LOG_DEBUG, "ERRO AT\\Q0 %d\r\n", __LINE__);
+	}
+        if (pin_code > 0 && pin_code < 10000) 
+        {
+            char pin_command[20];
+            sprintf(pin_command, "AT+CPIN=\"%d\"\r\n", pin_code);
+            if (!at_command(serial_fd,pin_command, 20000))
+            {
+		if(_debug)
+			syslog(LOG_DEBUG, "ERROR AT+CPIN %d\r\n", __LINE__);
+            }
+        }
+	if (!at_command(serial_fd, mux_command, 10000))
+	{
+		syslog(LOG_ERR, "MUX mode doesn't function.\n");
+		return -1;
+	}
+	return 0;
+}
+
 /**
  * Function to start modems that only needs at+cmux=X to get-in mux state
  */
@@ -1556,6 +1623,9 @@ openDevicesAndMuxMode (
   case M22A:
     ret = initBenqM22a ();
     break;
+  case GL865:
+    ret = initTelitGL865();
+    break;
     // case default:
     // syslog(LOG_ERR, "OOPS Strange modem\n");
   }
@@ -1665,6 +1735,8 @@ main (
 	_modem_type = M22A;
       else if (!strcmp (optarg, "m23a"))
 	_modem_type = M22A;
+      else if(!strcmp(optarg, "gl865"))
+	_modem_type = GL865;
       else
 	_modem_type = UNKNOW_MODEM;
       break;
