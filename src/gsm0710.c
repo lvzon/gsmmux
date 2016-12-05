@@ -1411,7 +1411,7 @@ int initIRZ52IT()
 }
 
 
-int initTelit()
+int initTelitGL865()
 {
 	char mux_command[] = "AT+CMUX=0\r\n";
     char speed_command[20] = "AT+IPR=9600\r\n";

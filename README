@@ -6,6 +6,11 @@ Modified 2003/2005 by Luis Vitorio Cargnini <lvcargnini@ieee.org>
 
 Development continued in Berlios GSM Multiplexer Daemon project
 
+Modified 2016 by Levien van Zon <levien@zonnetjes.net>
+Imported changes from https://github.com/BackupTheBerlios/gsmmux-svn
+and https://github.com/ya-jeks/gsmmux, and added support for Telit GL865.
+
+
 Introduction:
 ============
 
