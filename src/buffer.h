@@ -38,7 +38,7 @@ typedef struct GSM0710_Frame {
 
 #define GSM0710_BUFFER_SIZE 2048
 
-// for storing tempoary GSM0710_Buffer data in advanced option mode
+// for storing temporary GSM0710_Buffer data in advanced option mode
 typedef struct ADV_TmpBuffer
 {
 	unsigned char data[GSM0710_BUFFER_SIZE];
