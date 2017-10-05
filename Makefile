@@ -1,7 +1,7 @@
 # Comment/uncomment the following line to disable/enable debugging
 DEBUG = y
 
-TARGET = build/gsmMuxd
+TARGET = build/gsmmuxd
 INSTALLPATH = /usr/local/bin
 SRC = src/gsm0710.c src/buffer.c
 OBJS = build/gsm0710.o build/buffer.o
