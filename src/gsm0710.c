@@ -57,6 +57,9 @@
  *  - Added support for advanced non error recovery mode.
  *  - Added -n option: no daemon, don't fork, without debug messages.
  *
+ *  Modified October 2017 by Wouter Smit <...>
+ *  - Remove SIGKILL handler. SIGKILL cannot be caught by the process.
+ *
  *
  * New Usage:
  * gsmMuxd [options] <pty1> <pty2> ...
@@ -1282,13 +1285,6 @@ signal_treatment (
     // exit(0);
     terminate = 1;
     break;
-  case SIGKILL:
-    // kill immediatly
-    // i'm not sure if i put exit or sustain the terminate
-    // attribution
-    terminate = 1;
-    // exit(0);
-    break;
   case SIGUSR1:
     terminate = 1;
     // sig_term(param);
@@ -1775,7 +1771,6 @@ main (
    */
   signal (SIGHUP, signal_treatment);
   signal (SIGPIPE, signal_treatment);
-  signal (SIGKILL, signal_treatment);
   signal (SIGINT, signal_treatment);
   signal (SIGUSR1, signal_treatment);
   signal (SIGTERM, signal_treatment);
