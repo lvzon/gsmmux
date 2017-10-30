@@ -1926,8 +1926,18 @@ main (
 #else
 	  write_frame (0, NULL, 0, DISC | PF);
 #endif
-	else
-	  write_frame (0, close_mux, 2, UIH);
+	else {
+              unsigned char mux_close_frame[7] = { 0xf9, 0x03, 0xef, 0x03, 0xc3, 0x16, 0xf9 };
+
+              int c = write(serial_fd, mux_close_frame, 7);
+              if (7 != c) {
+                  if (_debug)
+                      syslog(LOG_DEBUG,
+                             "Couldn't write all data to the serial port to close the mux. Wrote only %d bytes.\n", c);
+                  return 0;
+              }
+//	  write_frame (0, close_mux, 2, UIH);
+          }
       }
       terminateCount--;
     }
