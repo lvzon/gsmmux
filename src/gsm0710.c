@@ -1421,7 +1421,26 @@ int initTelitGL865()
 			syslog(LOG_DEBUG, "ERROR AT %d\r\n", __LINE__);
 
         syslog(LOG_INFO, "Modem does not respond to AT commands, trying close MUX mode");
-		write_frame(0, close_mux, 2, UIH);
+//		write_frame(0, close_mux, 2, UIH);
+
+
+      write_frame (3, NULL, 0, DISC | PF);
+      sleep(3);
+      write_frame (2, NULL, 0, DISC | PF);
+      sleep(3);
+      write_frame (1, NULL, 0, DISC | PF);
+      sleep(3);
+      syslog(LOG_INFO, "Sending manual DISC frame.\n");
+      unsigned char mux_close_frame[7] = {0xf9, 0x03, DISC | PF, 0x01, 0xFD, 0xf9};
+
+      int c = write(serial_fd, mux_close_frame, 7);
+      if (7 != c) {
+        if (_debug)
+          syslog(LOG_DEBUG,
+                 "Couldn't write all data to the serial port to close the mux. Wrote only %d bytes.\n", c);
+        return 0;
+      }
+      sleep(5);
         at_command(serial_fd,"AT\r\n", 10000);
 	}
 
@@ -1927,16 +1946,20 @@ main (
 	  write_frame (0, NULL, 0, DISC | PF);
 #endif
 	else {
-              unsigned char mux_close_frame[7] = { 0xf9, 0x03, 0xef, 0x03, 0xc3, 0x16, 0xf9 };
-
-              int c = write(serial_fd, mux_close_frame, 7);
-              if (7 != c) {
-                  if (_debug)
-                      syslog(LOG_DEBUG,
-                             "Couldn't write all data to the serial port to close the mux. Wrote only %d bytes.\n", c);
-                  return 0;
-              }
-//	  write_frame (0, close_mux, 2, UIH);
+//          syslog(LOG_ERR, "Closing mux channel using manual disconnect frame.\n");
+          // A UIH CLD packet, according to  https://www.kernel.org/doc/Documentation/serial/n_gsm.txt
+          // unsigned char mux_close_frame[7] = { 0xf9, 0x03, 0xef, 0x03, 0xc3, 0x16, 0xf9 };
+          // A DISC packet.
+//          unsigned char mux_close_frame[7] = { 0xf9, 0x03, DISC | PF, 0x01, 0xFD, 0xf9};
+//
+//              int c = write(serial_fd, mux_close_frame, 7);
+//              if (7 != c) {
+//                  if (_debug)
+//                      syslog(LOG_DEBUG,
+//                             "Couldn't write all data to the serial port to close the mux. Wrote only %d bytes.\n", c);
+//                  return 0;
+//              }
+	  write_frame (0, close_mux, 2, UIH);
           }
       }
       terminateCount--;
